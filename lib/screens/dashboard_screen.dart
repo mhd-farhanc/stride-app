@@ -18,6 +18,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   late Stream<StepCount> _stepCountStream;
   String _steps = "0";
+  String _kcal = "0"; // <-- New variable for calories
   final int _dailyGoal = 8000;
   double _percent = 0.0;
 
@@ -98,10 +99,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // 5. Calculate the total steps for the day
     int totalForDay = todayCalculatedSteps + newSteps;
 
+    // --- NEW: Calculate Calories ---
+    const double caloriesPerStep = 0.04;
+    double calculatedKcal = totalForDay * caloriesPerStep;
+    // -----------------------------
+
     // 6. Update the UI
     setState(() {
       _steps = totalForDay.toString();
       _percent = (totalForDay / _dailyGoal).clamp(0.0, 1.0);
+      _kcal = calculatedKcal.toStringAsFixed(0); // Update the kcal value
     });
 
     // 7. Save the new state for the next event
@@ -109,6 +116,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _stepHistoryBox.put(
         'lastSensorTotal', event.steps); // Save the latest raw sensor value
     _stepHistoryBox.put(todayKey, totalForDay); // Save the day's total
+    _stepHistoryBox.put("${todayKey}_kcal", calculatedKcal); // Save calories
   }
 
   void _onStepCountError(error) {
@@ -181,7 +189,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildStatsRow(TextTheme textTheme) {
     String streak = "0";
-    String kcal = "0";
+    // We no longer need the local 'kcal' variable
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -198,7 +206,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         _buildStatCard(
           "Kcal",
-          kcal,
+          _kcal, // <-- Use the state variable _kcal
           textTheme,
         ),
       ],
@@ -224,7 +232,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // This is the "About" dialog function
   void _showAboutDialog(BuildContext context) {
-    // TODO: Replace with your GitHub URL
     final String githubUrl = "https://github.com/mhd-farhanc";
 
     showDialog(
