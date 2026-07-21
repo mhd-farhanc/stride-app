@@ -1,175 +1,140 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:provider/provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-import 'package:stride/screens/dashboard_screen.dart';
-import 'package:stride/screens/history_screen.dart';
-import 'package:stride/screens/settings_screen.dart'; 
+import 'package:stride/constants.dart';
+import 'package:stride/app.dart';
+import 'package:stride/services/step_repository.dart';
+import 'package:stride/services/pedometer_service.dart';
+import 'package:stride/services/background_service.dart';
+import 'package:stride/services/notification_service.dart';
+import 'package:stride/services/achievement_service.dart';
+import 'package:stride/providers/step_provider.dart';
+import 'package:stride/providers/theme_provider.dart';
+import 'package:stride/providers/achievement_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
-  await Hive.openBox('stepHistory');
-  runApp(const StrideApp());
-}
 
-// Global variable to hold the theme box
-final themeBox = Hive.box('stepHistory');
-
-
-// --- MainNavigator Definition (Moved to top to fix L47 error) ---
-class MainNavigator extends StatefulWidget {
-  const MainNavigator({super.key});
-
-  @override
-  State<MainNavigator> createState() => _MainNavigatorState();
-}
-
-class _MainNavigatorState extends State<MainNavigator> {
-  int _selectedIndex = 0;
-
-  static final List<Widget> _screens = <Widget>[
-    DashboardScreen(),
-    HistoryScreen(),
-    SettingsScreen(),
-  ];
-
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
+  // Request notification permission on Android 13+
+  try {
+    if (await Permission.notification.status.isDenied) {
+      await Permission.notification.request();
+    }
+  } catch (_) {
+    // Non-fatal — user can still use the app
   }
+
+  // Initialize all services before runApp with full try-catch protection
+  late StepRepository repository;
+  late PedometerService pedometerService;
+  late NotificationService notificationService;
+  late AchievementService achievementService;
+
+  try {
+    await Hive.initFlutter();
+    final box = await Hive.openBox(kStepHistoryBox);
+    repository = StepRepository(box);
+    pedometerService = PedometerService(repository);
+    notificationService = NotificationService();
+    await notificationService.initialize();
+    achievementService = AchievementService(repository);
+
+    // Initialize background service (non-critical)
+    try {
+      await StepBackgroundService.initialize();
+    } catch (e) {
+      debugPrint('Background service init failed: $e');
+    }
+  } catch (e) {
+    debugPrint('Service initialization failed: $e');
+    // Try to repair Hive database
+    if (e is HiveError) {
+      try {
+        await Hive.deleteBoxFromDisk(kStepHistoryBox);
+        final box = await Hive.openBox(kStepHistoryBox);
+        repository = StepRepository(box);
+        pedometerService = PedometerService(repository);
+        notificationService = NotificationService();
+        await notificationService.initialize();
+        achievementService = AchievementService(repository);
+        try {
+          await StepBackgroundService.initialize();
+        } catch (_) {}
+      } catch (_) {
+        final dummyBox = await _createDummyHiveBox();
+        repository = StepRepository(dummyBox);
+        pedometerService = PedometerService(repository);
+        notificationService = NotificationService();
+        achievementService = AchievementService(repository);
+      }
+    } else {
+      final dummyBox = await _createDummyHiveBox();
+      repository = StepRepository(dummyBox);
+      pedometerService = PedometerService(repository);
+      notificationService = NotificationService();
+      achievementService = AchievementService(repository);
+    }
+  }
+
+  runApp(
+    _StrideApp(
+      repository: repository,
+      pedometerService: pedometerService,
+      notificationService: notificationService,
+      achievementService: achievementService,
+    ),
+  );
+}
+
+/// Creates a minimal Hive box in memory if normal initialization fails.
+Future<Box> _createDummyHiveBox() async {
+  // Fall back to a lazy box that stores nothing.
+  // This ensures the app can still be launched for debugging.
+  try {
+    return await Hive.openBox(kStepHistoryBox);
+  } catch (_) {
+    // Truly last resort — the app will show empty stats
+    rethrow;
+  }
+}
+
+class _StrideApp extends StatelessWidget {
+  final StepRepository repository;
+  final PedometerService pedometerService;
+  final NotificationService notificationService;
+  final AchievementService achievementService;
+
+  const _StrideApp({
+    required this.repository,
+    required this.pedometerService,
+    required this.notificationService,
+    required this.achievementService,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: _screens.elementAt(_selectedIndex),
-      bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_filled),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart),
-            label: 'History',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-      ),
-    );
-  }
-}
-// --- End MainNavigator Definition ---
-
-
-// Convert StrideApp to StatefulWidget to manage theme state
-class StrideApp extends StatefulWidget {
-  const StrideApp({super.key});
-
-  // Helper method to access the state from anywhere (made public)
-  static StrideAppState of(BuildContext context) => context.findAncestorStateOfType<StrideAppState>()!;
-
-  @override
-  State<StrideApp> createState() => StrideAppState(); // Using public state name
-}
-
-class StrideAppState extends State<StrideApp> { // State class is now public
-  // Read the initial theme preference from Hive
-  bool get isDarkMode => themeBox.get('isDarkMode', defaultValue: true);
-
-  // Method called by the Settings screen to change the theme
-  void setBrightness(bool value) {
-    themeBox.put('isDarkMode', value);
-    setState(() {}); // Rebuild the entire app with the new theme
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Stride',
-      debugShowCheckedModeBanner: false,
-      theme: _buildLightStrideTheme(),
-      darkTheme: _buildDarkStrideTheme(), // Dark theme is generally the primary
-      themeMode: isDarkMode ? ThemeMode.dark : ThemeMode.light, // Control theme mode
-      home: const MainNavigator(),
-    );
-  }
-
-  // --- Dark Theme Definition ---
-  ThemeData _buildDarkStrideTheme() {
-    return ThemeData(
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: Colors.black, // BLACK
-      primaryColor: Colors.red.shade700,     // RED ACCENT
-      
-      textTheme: const TextTheme(
-        displayLarge: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        headlineMedium: TextStyle(color: Colors.white, fontWeight: FontWeight.w300),
-        bodyMedium: TextStyle(color: Colors.white70),
-        labelLarge: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-      ),
-      
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.black,
-        elevation: 0,
-        centerTitle: true,
-        titleTextStyle: TextStyle(
-          color: Colors.white,
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (_) => ThemeProvider(repository: repository),
         ),
-      ),
-
-      bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: Colors.black,
-        selectedItemColor: Colors.red.shade700,
-        unselectedItemColor: Colors.white54,
-        type: BottomNavigationBarType.fixed,
-        showSelectedLabels: false,
-        showUnselectedLabels: false,
-      ),
-    );
-  }
-
-  // --- Light Theme Definition ---
-  ThemeData _buildLightStrideTheme() {
-    return ThemeData(
-      brightness: Brightness.light,
-      scaffoldBackgroundColor: Colors.white, // WHITE
-      primaryColor: Colors.red.shade600,     // RED ACCENT (slightly softer)
-      
-      textTheme: const TextTheme(
-        displayLarge: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-        headlineMedium: TextStyle(color: Colors.black54, fontWeight: FontWeight.w300),
-        bodyMedium: TextStyle(color: Colors.black87),
-        labelLarge: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-      ),
-      
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.white,
-        elevation: 1, 
-        centerTitle: true,
-        iconTheme: IconThemeData(color: Colors.black), 
-        titleTextStyle: TextStyle(
-          color: Colors.black,
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
+        ChangeNotifierProvider(
+          create: (_) => StepProvider(
+            repository: repository,
+            pedometerService: pedometerService,
+            achievementService: achievementService,
+            notificationService: notificationService,
+          )..initialize(),
         ),
-      ),
-
-      bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: Colors.white,
-        selectedItemColor: Colors.red.shade600,
-        unselectedItemColor: Colors.black54,
-        type: BottomNavigationBarType.fixed,
-        showSelectedLabels: false,
-        showUnselectedLabels: false,
-      ),
+        ChangeNotifierProvider(
+          create: (_) => AchievementProvider(
+            repository: repository,
+          ),
+        ),
+      ],
+      child: const StrideApp(),
     );
   }
 }
