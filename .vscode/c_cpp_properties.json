@@ -1,0 +1,18 @@
+{
+  "configurations": [
+    {
+      "name": "Linux",
+      "compilerPath": "",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "linux-gcc-x64",
+      "includePath": [
+        "${workspaceFolder}/windows/flutter/ephemeral",
+        "${workspaceFolder}/windows/flutter/ephemeral/.plugin_symlinks/*/windows/include",
+        "/home/farhan/Flutter/flutter/engine/src/flutter/shell/platform/common/public",
+        "/home/farhan/Flutter/flutter/engine/src/flutter/shell/platform/windows/public"
+      ]
+    }
+  ],
+  "version": 4
+}
